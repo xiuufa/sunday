@@ -44,6 +44,9 @@ USAGE_KEY = "cmd_usage"
 # 后台服务 PID 文件目录(相对项目根, sun 启动时 cwd 即项目根)
 SERVICE_DIR = Path("data/services")
 
+# 后台服务 stderr 落盘目录(相对项目根): 服务自身未捕获的异常(如端口被占)写到这里, 避免静默退出
+LOG_DIR = Path("log")
+
 # 服务子进程身份标识: 前者表示"我是 cmd 拉起的服务进程", 后者记录具体是哪个服务
 SERVICE_ENV = "SUN_DAEMON"
 SERVICE_NAME_ENV = "SUN_SERVICE"
@@ -176,12 +179,18 @@ class Cmd:
             return False
         try:
             SERVICE_DIR.mkdir(parents=True, exist_ok=True)
-            proc = subprocess.Popen(
-                svc["argv"], cwd=os.getcwd(),
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True,
-                env={**os.environ, **(svc.get("env") or {})},
-            )
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            # 服务自身未捕获的异常(如端口被占)落到 log/<名字>.stderr.log, 不再静默丢失
+            stderr_file = open(LOG_DIR / f"{name}.stderr.log", "a", encoding="utf-8")
+            try:
+                proc = subprocess.Popen(
+                    svc["argv"], cwd=os.getcwd(),
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=stderr_file,
+                    start_new_session=True,
+                    env={**os.environ, **(svc.get("env") or {})},
+                )
+            finally:
+                stderr_file.close()  # 子进程已复制该 fd, 父进程这侧可以关掉
         except Exception as e:
             self._log(f"后台服务启动失败 [{name}]: {e}")
             return False

@@ -990,7 +990,19 @@ def serve():
     """
     server = _Server(name="lobo-PC", tcp_port=DEFAULT_TCP_PORT, udp_port=DEFAULT_UDP_PORT)
     server.hooks = _make_hooks(server)
-    server.start()
+    try:
+        server.start()
+    except OSError as e:
+        # 端口被占等启动失败: 记录原因并退出, 不静默消失
+        # (traceback 走 stderr, 由 cmd 落到 log/<服务名>.stderr.log)
+        _log.exception("lobo 守护进程启动失败 (tcp=%d, udp=%d)", DEFAULT_TCP_PORT, DEFAULT_UDP_PORT)
+        _sun_log(f"lobo 守护进程启动失败 (tcp={DEFAULT_TCP_PORT}, udp={DEFAULT_UDP_PORT}): "
+                 f"[Errno {e.errno}] {e.strerror or e}")
+        try:
+            server.stop()
+        except Exception:
+            pass
+        raise SystemExit(1)
     _sun_log(f"lobo 守护进程已就绪 (pid={os.getpid()}, 下载目录={_output_dir()})")
 
     stop_evt = threading.Event()
