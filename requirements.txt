@@ -1,0 +1,9 @@
+# Sunday CLI 项目依赖
+# 更新命令: <venv>/bin/pip install -r requirements.txt
+Pillow>=10.0.0
+opencv-python
+numpy
+imageio
+tkinterdnd2
+psutil
+# 注: tkinter 为 Python 标准库, 在 Linux 需系统包 python3-tk (pip 无法安装)

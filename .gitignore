@@ -1,0 +1,16 @@
+# 运行时产物(自动生成, 不入库)
+.venv/
+__pycache__/
+*.py[cod]
+log/
+download/
+data/config/config.json
+data/services/
+
+# 编辑器/IDE
+.idea/
+.vscode/
+
+# 系统文件
+.DS_Store
+Thumbs.db
