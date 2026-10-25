@@ -21,9 +21,6 @@ data/easyocr/
 data/oodick_emo/
 data/vision_dataset/
 
-# 开发者工具, 不随项目仓库分发
-modules/market_manager/
-
 # 编辑器/IDE
 .idea/
 .vscode/

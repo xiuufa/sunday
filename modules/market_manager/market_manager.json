@@ -1,0 +1,16 @@
+{
+    "name": "market_manager",
+    "role": "market",
+    "desc": "模块市场管理器: 列出、搜索、安装、上传、删除云端、启停和删除本地模块",
+    "ID": "market_manager1792936424",
+    "used": true,
+    "gitee": {
+        "repo": "xiuufa/sunday",
+        "token": "",
+        "release_tag": "mods",
+        "release_name": "Sunday modules",
+        "target_commitish": "master",
+        "index_asset": "index.json"
+    },
+    "need": []
+}
