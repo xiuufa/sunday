@@ -8,6 +8,12 @@ set -e
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
 
+# pip 下载源: 默认用清华镜像, 避免未配置源的用户直连国外 PyPI 超时
+# 想换源可临时覆盖, 例如: SUN_PIP_INDEX=https://mirrors.aliyun.com/pypi/simple bash install_sun.sh
+PIP_INDEX="${SUN_PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+PIP_HOST="$(echo "$PIP_INDEX" | sed -E 's#^https?://([^/:]+).*#\1#')"
+PIP_OPTS=(--index-url "$PIP_INDEX" --trusted-host "$PIP_HOST" --progress-bar on)
+
 if [ ! -d "$VENV_DIR" ]; then
     echo "[sun] 首次运行, 准备虚拟环境..."
 
@@ -20,9 +26,11 @@ if [ ! -d "$VENV_DIR" ]; then
         echo "错误: 虚拟环境创建失败, Ubuntu/Debian 请先安装: sudo apt install python3-venv"
         exit 1
     }
-    "$VENV_DIR/bin/pip" install --upgrade pip -q
+    echo "[sun] (1/2) 升级 pip ..."
+    "$VENV_DIR/bin/pip" install --upgrade pip "${PIP_OPTS[@]}"
     if [ -f "$PROJECT_DIR/requirements.txt" ]; then
-        "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements.txt" -q
+        echo "[sun] (2/2) 从 $PIP_INDEX 安装依赖, 首次会下载 torch 等大包, 请耐心等待 ..."
+        "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements.txt" "${PIP_OPTS[@]}"
     fi
     echo "[sun] 虚拟环境就绪"
 else

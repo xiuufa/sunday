@@ -6,6 +6,10 @@ VENV_DIR="$PROJECT_DIR/.venv"
 CLI_SCRIPT="$PROJECT_DIR/core.py"
 # 记录调用者目录: core 常驻在项目根, 模块需要时可从 T.CLIENT_CWD 取
 CLIENT_CWD="${SUN_CLIENT_CWD:-$PWD}"
+# pip 下载源: 默认用清华镜像, 可用 SUN_PIP_INDEX 覆盖
+PIP_INDEX="${SUN_PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+PIP_HOST="$(echo "$PIP_INDEX" | sed -E 's#^https?://([^/:]+).*#\1#')"
+PIP_OPTS=(--index-url "$PIP_INDEX" --trusted-host "$PIP_HOST")
 
 # 首次运行：自动创建 venv 并安装依赖
 if [ ! -d "$VENV_DIR" ]; then
@@ -20,9 +24,10 @@ if [ ! -d "$VENV_DIR" ]; then
         echo "错误: 虚拟环境创建失败, Ubuntu/Debian 请先安装: sudo apt install python3-venv"
         exit 1
     }
-    "$VENV_DIR/bin/pip" install --upgrade pip -q
+    echo "[sun] 升级 pip 并安装依赖(源: $PIP_INDEX) ..."
+    "$VENV_DIR/bin/pip" install --upgrade pip "${PIP_OPTS[@]}"
     if [ -f "$PROJECT_DIR/requirements.txt" ]; then
-        "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements.txt" -q
+        "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements.txt" "${PIP_OPTS[@]}"
     fi
     echo "[sun] 虚拟环境就绪"
 fi
