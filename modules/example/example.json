@@ -3,6 +3,5 @@
     "role": "demo",
     "desc": "示例模块, 演示新规范; 无实际作用",
     "ID": "example1792906494",
-    "used": false,
-    "api": []
+    "used": false
 }

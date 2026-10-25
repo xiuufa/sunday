@@ -2,22 +2,12 @@
     "name": "market",
     "role": "market",
     "desc": "模块市场: 列出、搜索、安装、启停和删除本地模块",
-    "ID": "market1792935744",
+    "ID": "market1792936423",
     "used": true,
     "gitee": {
         "repo": "xiuufa/sunday",
         "release_tag": "mods",
         "index_asset": "index.json"
     },
-    "api": [
-        "help",
-        "list",
-        "find",
-        "install",
-        "mkid",
-        "used",
-        "unused",
-        "rm"
-    ],
     "need": []
 }

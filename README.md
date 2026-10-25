@@ -209,7 +209,6 @@ class Module:
     "desc": "一句话说明模块作用",
     "ID": "mymodule1792906494",
     "used": true,
-    "api": ["status"],
     "need": []
 }
 ```
@@ -228,7 +227,7 @@ class Module:
 - `call()` 可以调整 `G.MODULES_LIST`，也可以追加新模块实例。
 - `call()` 不能阻塞，否则 core 无法接收命令；它按 `G.MODULES_LIST` 顺序串行执行，模块间有初始化依赖时需要自己保证顺序。
 - `load()` / `start()` 不再由 core 调用，可以当作普通方法名或子命令使用。
-- core 只读取 `<名字>.json` 的 `ID`、`used`、`desc`（`help` 兼容旧字段）；`api`、`need` 等字段交给 market 或模块自己使用。
+- core 只读取 `<名字>.json` 的 `ID`、`used`、`desc`（`help` 兼容旧字段）；`need` 等字段交给 market 或模块自己使用。
 - 模块只在 core 启动时初始化一次，改完代码需要重启 core。
 
 完整规范见 [docs/插件开发手册.md](docs/插件开发手册.md)。
