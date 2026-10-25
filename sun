@@ -1,0 +1,35 @@
+#!/bin/bash
+set -e
+
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VENV_DIR="$PROJECT_DIR/.venv"
+CLI_SCRIPT="$PROJECT_DIR/core.py"
+# 记录调用者目录: core 常驻在项目根, 模块需要时可从 T.CLIENT_CWD 取
+CLIENT_CWD="${SUN_CLIENT_CWD:-$PWD}"
+
+# 首次运行：自动创建 venv 并安装依赖
+if [ ! -d "$VENV_DIR" ]; then
+    echo "[sun] 首次运行，准备虚拟环境..."
+    
+    if ! command -v python3 &> /dev/null; then
+        echo "错误：未找到 python3，请先安装 Python 3"
+        exit 1
+    fi
+    
+    python3 -m venv "$VENV_DIR" || {
+        echo "错误: 虚拟环境创建失败, Ubuntu/Debian 请先安装: sudo apt install python3-venv"
+        exit 1
+    }
+    "$VENV_DIR/bin/pip" install --upgrade pip -q
+    if [ -f "$PROJECT_DIR/requirements.txt" ]; then
+        "$VENV_DIR/bin/pip" install -r "$PROJECT_DIR/requirements.txt" -q
+    fi
+    echo "[sun] 虚拟环境就绪"
+fi
+
+# 进入项目目录, 保证模块内的相对路径(如 ./data)有效
+cd "$PROJECT_DIR"
+export SUN_CLIENT_CWD="$CLIENT_CWD"
+
+# 用 venv 的 Python 执行 core 客户端, 透传所有参数
+exec "$VENV_DIR/bin/python" "$CLI_SCRIPT" --client "$@"

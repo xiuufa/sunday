@@ -1,0 +1,33 @@
+# 运行时产物(自动生成, 不入库)
+.venv/
+__pycache__/
+*.py[cod]
+log/
+download/
+data/config/config.json
+data/services/
+
+# core 运行时文件
+core/core.log
+core/core.sock
+core/core.lock
+core/core.pid
+
+# 模块市场临时目录
+tmp/
+
+# 本地模型/数据集资源
+data/easyocr/
+data/oodick_emo/
+data/vision_dataset/
+
+# 开发者工具, 不随项目仓库分发
+modules/market_manager/
+
+# 编辑器/IDE
+.idea/
+.vscode/
+
+# 系统文件
+.DS_Store
+Thumbs.db

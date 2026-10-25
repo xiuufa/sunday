@@ -1,0 +1,11 @@
+# Sunday 插件依赖(core 本身只用 Python 标准库)
+# 更新命令: <venv>/bin/pip install -r requirements.txt
+Pillow>=10.0.0
+opencv-python
+numpy
+imageio
+tkinterdnd2
+psutil
+# vision 插件的 OCR 识别(会连带安装 torch, 体积较大)
+easyocr
+# 注: tkinter 为 Python 标准库, 在 Linux 需系统包 python3-tk (pip 无法安装)
