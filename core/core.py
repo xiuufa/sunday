@@ -428,6 +428,21 @@ class Sunday:
                 mods.append(mod)
         return mods
 
+    def cmd_list(self, simple=False):
+        """列出可用模块; simple=True 时只输出 name"""
+        mods = self._available()
+        if not mods:
+            print("(没有可用模块)")
+            return
+        for mod in mods:
+            name = str(getattr(mod, "name", "") or getattr(mod, "role", ""))
+            if simple:
+                print(name)
+            else:
+                role = getattr(mod, "role", "")
+                desc = getattr(mod, "desc", "")
+                print(f"{role}\t{name}\t{desc}")
+
     def cmd_help(self):
         print("这里是 sunday: 基于 Python 的命令行自定义工具框架")
         print("用法:")
