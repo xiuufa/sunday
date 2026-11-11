@@ -136,14 +136,14 @@ class Initializer:
             setattr(self.G, token, mod)
 
     def run(self, names=None, quiet: bool = True) -> list:
-        """初始化模块; names 为空时按 init.json 的 used && init 执行"""
-        if names:
-            targets = [str(name) for name in names if str(name).strip()]
-        else:
+        """初始化模块; names=None 时按 init.json 的 used && init 执行, 空列表表示不初始化"""
+        if names is None:
             targets = [
                 item["name"] for item in self.load()
                 if item["used"] and item["init"]
             ]
+        else:
+            targets = [str(name) for name in names if str(name).strip()]
 
         loaded = []
         for token in targets:

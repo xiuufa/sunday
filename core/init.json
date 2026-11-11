@@ -6,7 +6,7 @@
     },
     {
         "name": "gui",
-        "used": false,
+        "used": true,
         "init": true
     },
     {

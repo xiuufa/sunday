@@ -446,7 +446,7 @@ class Sunday:
     def cmd_help(self):
         print("这里是 sunday: 基于 Python 的命令行自定义工具框架")
         print("用法:")
-        print("  sun                    确保 core 运行")
+        print("  sun                    确保 core 运行；已在运行则重启")
         print("  sun help               显示帮助和指令列表")
         print("  sun list               列出可用指令")
         print("  sun init [模块...]     初始化指定模块, 或按 init.json 初始化")
@@ -718,14 +718,43 @@ def _ensure_core(timeout: float = 10.0):
     if sock is not None:
         return sock
 
-    _spawn_core()
     deadline = time.time() + timeout
     while time.time() < deadline:
-        sock = _connect()
-        if sock is not None:
-            return sock
-        time.sleep(0.05)
+        _spawn_core()
+        # 重启时旧进程可能还没释放锁, 新一轮在短时间内重试, 不必等满整个超时
+        probe_deadline = min(deadline, time.time() + 2.0)
+        while time.time() < probe_deadline:
+            sock = _connect()
+            if sock is not None:
+                return sock
+            time.sleep(0.05)
     raise RuntimeError(f"core 启动超时, 请查看 {CORE_LOG}")
+
+
+def _restart_core(cwd: str = "", timeout: float = 10.0):
+    """core 未运行时直接拉起; 已在运行时先停掉再启动"""
+    sock = _connect()
+    if sock is None:
+        return _ensure_core(timeout)
+
+    try:
+        _request(sock, {"argv": ["stop"], "cwd": cwd})
+    finally:
+        sock.close()
+
+    # 等旧 core 完成清理(注销 socket / 释放锁), 否则新进程抢不到锁
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        probe = _connect(0.1)
+        if probe is None:
+            break
+        probe.close()
+        time.sleep(0.05)
+    else:
+        raise RuntimeError("core 停止超时, 请查看 core/core.log")
+
+    time.sleep(0.1)
+    return _ensure_core(timeout)
 
 
 def _request(sock, payload):
@@ -745,10 +774,10 @@ def _request(sock, payload):
 def client(argv) -> int:
     cwd = os.environ.get("SUN_CLIENT_CWD") or os.getcwd()
 
-    # sun: 只确保 core 活着; 已在运行则直接返回
+    # sun: 确保 core 活着; 已在运行则重启
     if not argv:
         try:
-            sock = _ensure_core()
+            sock = _restart_core(cwd)
             sock.close()
         except Exception as e:
             print(f"[sun] {e}", file=sys.stderr)

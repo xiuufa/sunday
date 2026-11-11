@@ -44,7 +44,7 @@ core/core.py --daemon (常驻)
 4. `sun` 把参数原样发给 core；目标模块未初始化时只按需加载并直接执行，不自动补初始化。
 5. `sun stop` 通知 core 退出；core 调用 init / server 的关停逻辑并清理运行时文件。
 
-`sun` 不带参数时只确保 core 正在运行，不打印任何内容。查看帮助请用 `sun help`。
+`sun` 不带参数时确保 core 正在运行；如果 core 已在运行，会先停止再重新拉起。不打印任何内容，查看帮助请用 `sun help`。
 
 ## 环境要求
 
@@ -94,7 +94,7 @@ powershell -ExecutionPolicy Bypass -File install_sun.ps1
 ## 使用
 
 ```bash
-sun                      # 确保 core 运行；不在则拉起，在则直接返回
+sun                      # 确保 core 运行；已在运行则重启
 sun help                 # 显示用法和模块列表（role / name - desc）
 sun list                 # 只列出各模块 name
 sun init [模块...]       # 按模块 JSON 的 init 初始化, 或初始化指定模块
@@ -362,7 +362,7 @@ Windows 则删除 `%USERPROFILE%\.bin\sun.cmd`，并从用户 `PATH` 中移除�
 
 **`sun` 没有输出？**
 
-`sun` 不带参数只负责确保 core 运行。查看帮助请执行 `sun help`。
+`sun` 不带参数负责确保 core 运行；已在运行时先停止再重新拉起。查看帮助请执行 `sun help`。
 
 **`sun list` 和 `sun help` 有什么区别？**
 
