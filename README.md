@@ -13,6 +13,7 @@
 - **同 role 替换**：同名角色的模块按 `<名字>.json` 里的 `ID` 时间戳比较，保留较新的一个。
 - **统一帮助**：`sun help` 打印每个模块的 `role / name` 和 `desc`；`sun list` 只打印各模块的 `name`；参数、子命令等细节由模块自己的 `help` 子命令提供。
 - **模块市场**：`market`（发布版，面向用户）和 `market_manager`（开发者工具，通过 Release 分发）共用 `role = market`，按 `ID` 时间戳只加载一个；负责列出、搜索全部云端模块、依赖检查、安装、启用/弃用和删除本地模块，`market_manager` 额外负责上传和删除云端模块。
+- **vision**：ADB 投屏 + easyocr 屏幕文字识别，按优先级点击「领取奖励」等文字；识别循环由 `G.server` 托管，不阻塞 core。
 - **共享日志**：core 通过 `G.log(message, path="")` 提供带时间戳的追加日志，默认写入 `log/sun.log`。
 - **输出回传**：模块里的 `print()` 会被 core 捕获并返回给 `sun`，客户端不需要额外协议。
 - **致命错误提示**：core 无法继续运行时写 `core/core.log` 并尝试弹出系统消息。
@@ -120,6 +121,18 @@ sun stop
 - `sun list` 是 core 内建命令，只打印各模块的 `name`；模块不能再占用 `list` 这个 role/name。
 - `sun help` 只输出全局帮助，不接受模块名参数。
 - 查看某个模块的详细说明用 `sun <模块> help`（模块提供 `help` 子命令时，例如 `sun market help`、`sun whiteblob help`）。
+
+vision（需要设备开启 USB 调试，以及 `adb` / `ffmpeg` / `easyocr`）：
+
+```bash
+sun vision devices                 # 列出在线设备
+sun vision shot                    # 截一帧到 data/vision/，用于量坐标
+sun vision run region=0,100,1260,2300 close_btn=1144,200
+sun vision status                  # 运行状态与 MJPEG 投屏地址
+sun vision stop
+```
+
+`run` 的坐标会保存到 `data/vision/config.json`，之后可直接 `sun vision run`；运行日志在 `core/services/vision.log`。
 
 ## 模块市场
 
@@ -252,7 +265,7 @@ class Module:
 - `G.init.load()` / `save(entries)` / `ensure(token)` / `set(token, used, init)` / `remove(token)` 用于读写 `core/init.json`。
 - `G.call("lobo", "get")` 可在模块内执行一条 sun 指令，返回 `(code, stdout, stderr)`，与 `sun lobo get` 同一套路由，不启动子进程。
 - `G.server` 由 core 内置的 `server` 工具提供，始终可用。需要常驻服务时用 `G.server.register(name, argv, marker="", env=None, persist=False)` 登记；`G.server.wait(name, timeout, probe)` 等待服务就绪；`persist=True` 的服务在 core 退出时保留（默认随 core 停止）。参考 `whiteblob` 的 facade + `serve.py` 写法。
-- GUI 工具面板按钮由 `whiteblob` 提供：在模块 `init()` 里调用 `G.get("gui").add_button(text, command)` 注册，`command` 是不带 `sun` 的命令（如 `"lobo get"`）；失败用 `G.log` 记录后继续。参考 `lobo` / `doubao`。
+- GUI 工具面板按钮由 `whiteblob` 提供：在模块 `init()` 里调用 `G.get("gui").add_button(text, command)` 注册，`command` 是不带 `sun` 的命令（如 `"lobo get"`）；失败用 `G.log` 记录后继续。参考 `lobo`。
 - `load()` / `start()` 不再有生命周期含义，可以当作普通方法名或子命令使用。
 - core 只读取 `<名字>.json` 的 `ID`、`used`、`init`、`desc`（`help` 兼容旧字段）；`依赖`、`依赖模块`、`api` 不由 core 使用。`ID` 优先读 JSON，没有时用类属性 `ID` 兜底。
 - `依赖` 写 python 包（同 `requirements.txt` 写法），`依赖模块` 写需要的模块 role；`sun market auto`（`market_manager` 同样可用）会检查/安装 python 依赖，并把已安装的依赖模块在 `core/init.json` 中排到前面。
@@ -298,6 +311,11 @@ sunday/
 │   │   ├── whiteblob.py    # facade: 挂载时登记、init() 启动、命令代理
 │   │   ├── serve.py        # 独立窗口进程(python -m modules.whiteblob.serve)
 │   │   └── common.py       # 共享常量
+│   ├── vision/             # role = vision，ADB 投屏 + OCR 自动化
+│   │   ├── vision.py       # facade: run/stop/status/shot/devices
+│   │   ├── worker.py       # 后台识别循环(core 托管)
+│   │   ├── common.py       # 常量、坐标配置与参数解析
+│   │   └── tools/          # adb.py 设备操作 / mirror.py 投屏帧流
 │   └── market/             # role = market，用户发布版
 ├── docs/
 │   └── 插件开发手册.md

@@ -6,12 +6,17 @@
     },
     {
         "name": "gui",
-        "used": true,
+        "used": false,
         "init": true
     },
     {
         "name": "lobo",
         "used": true,
         "init": true
+    },
+    {
+        "name": "vision",
+        "used": true,
+        "init": false
     }
 ]
