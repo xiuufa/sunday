@@ -1,32 +1,19 @@
 #!/usr/bin/env python3
-"""
-Sunday core
+"""Sunday core
 
-两种角色:
-    core.py --daemon          常驻核心: 加载模块、初始化、监听 UDS
-    core.py --client [指令]   短命客户端: 连接(必要时拉起) core 并转发指令
+core/core.py --daemon          常驻: 挂载三件套、按 init.json 初始化、监听 UDS
+core/core.py --client [指令]   客户端: 连接(必要时拉起) core 并转发指令
 
-模块规范:
-    modules/<名字>/<名字>.py   唯一加载目标
-    modules/<名字>/<名字>.json 市场元数据; core 读取 ID 用于同 role 替换
-    目标文件导出 Module        固定为一个名为 Module 的类
-    模块里直接使用 G / T       由 core 在 exec_module 之前注入模块全局命名空间
+core 只做四件事:
+    1. G / T 不存在时创建它们
+    2. 挂载 log / init / server 三件套
+    3. 把空参交给 init, 由 init 按 core/init.json 初始化
+    4. 把 sun 的指令穿透给模块; 未初始化就提示, 不自动初始化
 
-初始化:
-    1. 读取 <名字>.json 的 ID
-    2. 实例化全部 Module, 同 role 模块用 ID 时间戳大的替换旧的
-    3. 依次调用 call()  一次性初始化, 允许调整 G.MODULES_LIST 顺序
-    4. 阻塞监听并分发指令; call() 失败的模块会被移除
-    used=False 的模块仍会被加载和初始化, 但不会出现在 sun help 中,
-    也不能通过 sun <role> 调用
-
-路由:
-    sun                     确保 core 运行(不在则拉起, 在则直接返回)
-    sun stop                停止 core
-    sun help                core 内建帮助和模块列表
-    sun <模块>               调用模块的 run()
-    sun <模块> <子命令> ...  调用 subcommands 中登记的方法
-    role 是主键, name 是可选别名; 查找时 role 优先, name 兜底
+模块位于 modules/<名字>/<名字>.py, 导出 Module 类; 导入前注入 G / T。
+初始化 = G.<模块> = 实例 + 调用模块的 init()。
+同名 <名字>.json 提供 ID, 同 role 模块按 ID 时间戳大者胜出。
+role 是主键, name 是别名; used=False 的模块不开放给 sun。
 """
 
 import contextlib
@@ -45,6 +32,10 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+from init import Initializer
+from log import write as write_log
+from server import Server
+
 try:
     import fcntl
 except ImportError:  # Windows
@@ -55,30 +46,29 @@ try:
 except ImportError:  # Linux
     msvcrt = None
 
-APP_PATH = Path(__file__).resolve().parent
-# 保证模块可以用 from modules.<名字> import <辅助文件>
+CORE_DIR = Path(__file__).resolve().parent
+APP_PATH = CORE_DIR.parent
+# 保证 core 工具可导入, 同时模块可以用 from modules.<名字> import <辅助文件>
+if str(CORE_DIR) not in sys.path:
+    sys.path.insert(0, str(CORE_DIR))
 if str(APP_PATH) not in sys.path:
     sys.path.insert(0, str(APP_PATH))
 
 MODULES_DIR = APP_PATH / "modules"
-# core 自己的运行时文件放在 core/ 目录, 根目录保持简洁
-CORE_DIR = APP_PATH / "core"
 SOCKET_PATH = CORE_DIR / "core.sock"
 LOCK_PATH = CORE_DIR / "core.lock"
 PID_PATH = CORE_DIR / "core.pid"
 CORE_LOG = CORE_DIR / "core.log"
-# 模块共享日志的默认位置
-DEFAULT_LOG_PATH = APP_PATH / "log" / "sun.log"
 
-# 目标 py 里固定导出的类名
 MODULE_EXPORT = "Module"
 # core 内建命令, 不参与模块路由
-RESERVED_COMMANDS = {"help", "stop"}
+RESERVED_COMMANDS = {"help", "stop", "list", "init"}
 # 模块请求客户端确认时的退出码
 CONFIRM_EXIT_CODE = 3
 # G 自身占用的属性, 不允许模块名/role 覆盖
 _G_RESERVED = {
-    "APP_PATH", "MODULES_LIST", "by_name", "by_role", "_module_attrs", "get", "log",
+    "APP_PATH", "MODULES_LIST", "by_name", "by_role",
+    "get", "call", "log", "init", "server",
 }
 
 
@@ -90,47 +80,52 @@ class G:
         self.MODULES_LIST = []
         self.by_name = {}
         self.by_role = {}
-        self._module_attrs = set()
 
     def get(self, key, default=None):
-        """按 role 或 name 取模块; role 是主键, name 是别名"""
+        """按 role 或 name 取已加载模块; role 是主键, name 是别名"""
         mod = self.by_role.get(key)
         if mod is None:
             mod = self.by_name.get(key)
         return default if mod is None else mod
-
-    def log(self, message: str, path: str = "") -> None:
-        """追加日志: 时间戳 + 内容; path 为空时写入 ./log/sun.log"""
-        target = Path(path) if path else DEFAULT_LOG_PATH
-        if not target.is_absolute():
-            target = APP_PATH / target
-        target.parent.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(target, "a", encoding="utf-8") as f:
-            f.write(f"[{stamp}] {message}\n")
 
     def __contains__(self, key):
         return key in self.by_role or key in self.by_name
 
 
 class T:
-    """临时共享对象: 每次请求的上下文放在这里"""
+    """临时共享对象: 每次请求的上下文可以放在这里"""
 
     def __init__(self):
         self.CLIENT_CWD = str(APP_PATH)
 
 
+_G = None
+_T = None
+
+
+def context():
+    """G / T 不存在时创建; log 一并挂到 G.log"""
+    global _G, _T
+    if _G is None:
+        _G = G()
+        _G.log = write_log
+    if _T is None:
+        _T = T()
+    return _G, _T
+
+
 class Sunday:
     def __init__(self):
-        self.G = G()
-        self.T = T()
+        self.G, self.T = context()
+        self.G.server = Server()
+        self.init = Initializer(self.G, self.load_module, _G_RESERVED)
+        self.G.init = self.init
+        self.G.call = self.call
+        self._index = {}
         self._stop = False
+        self._tools_closed = False
         self._lock_fh = None
         self._sock = None
-
-    # ------------------------------------------------------------------ #
-    # 致命错误: 只处理 core 自身无法继续运行的情况
-    # ------------------------------------------------------------------ #
 
     @staticmethod
     def _system_message(message: str):
@@ -180,26 +175,80 @@ class Sunday:
             pass
         cls._system_message(message)
 
-    # ------------------------------------------------------------------ #
-    # 模块加载
-    # ------------------------------------------------------------------ #
-
-    def load_modules(self):
-        """扫描 modules/<名字>/<名字>.py 并实例化"""
+    def scan_modules(self):
+        """只读 manifest 建立索引, 启动时不导入模块"""
+        self._index = {}
         if not MODULES_DIR.is_dir():
             return
 
         for mod_dir in sorted(MODULES_DIR.iterdir()):
             if not mod_dir.is_dir() or mod_dir.name.startswith("_"):
                 continue
-            target = mod_dir / f"{mod_dir.name}.py"
-            if target.is_file():
-                self._load_one(mod_dir.name, target)
+            path = mod_dir / f"{mod_dir.name}.py"
+            if not path.is_file():
+                continue
+            entry = self._manifest_entry(mod_dir.name, path)
+            for token in {entry["dir"], entry["role"], entry["name"]}:
+                if not token:
+                    continue
+                old = self._index.get(token)
+                if old is None or self._entry_timestamp(entry) > self._entry_timestamp(old):
+                    self._index[token] = entry
 
+    @staticmethod
+    def _manifest_entry(dir_name: str, path: Path) -> dict:
+        """manifest 与模块 py 同名: modules/example/example.json"""
+        manifest = {}
+        try:
+            data = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                manifest = data
+        except Exception:
+            pass
+        role = str(manifest.get("role") or dir_name).strip() or dir_name
+        name = str(manifest.get("name") or role).strip() or role
+        used = manifest.get("used")
+        return {
+            "dir": dir_name,
+            "path": path,
+            "role": role,
+            "name": name,
+            "ID": str(manifest.get("ID") or ""),
+            "desc": str(manifest.get("desc") or manifest.get("help") or ""),
+            "used": used if isinstance(used, bool) else True,
+            "init": manifest.get("init") is True,
+        }
+
+    @staticmethod
+    def _entry_timestamp(entry: dict) -> int:
+        raw = str(entry.get("ID") or "")
+        for prefix in (entry.get("name", ""), entry.get("role", "")):
+            prefix = str(prefix or "")
+            if prefix and raw.startswith(prefix):
+                raw = raw[len(prefix):]
+                break
+        match = re.search(r"(\d+)$", raw)
+        return int(match.group(1)) if match else -1
+
+    def load_module(self, token: str):
+        """按需加载: 只导入/实例化, 不调用模块的 init()"""
+        mod = self.resolve(token)
+        if mod is not None:
+            return mod
+        entry = self._index.get(token)
+        if entry is None:
+            return None
+
+        inst = self._instantiate(entry)
+        if inst is None:
+            return None
+        self._register(inst)
         self.rebuild_registry()
+        return self.resolve(token) or inst
 
-    def _load_one(self, dir_name: str, path: Path):
-        # manifest 与模块 py 同名: modules/example/example.json
+    def _instantiate(self, entry: dict):
+        dir_name = entry["dir"]
+        path = entry["path"]
         manifest = {}
         try:
             data = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
@@ -221,15 +270,15 @@ class Sunday:
             spec.loader.exec_module(module)
         except Exception:
             sys.modules.pop(spec_name, None)
-            return
+            return None
 
         cls = getattr(module, MODULE_EXPORT, None)
         if not isinstance(cls, type):
-            return
+            return None
         try:
             inst = cls()
         except Exception:
-            return
+            return None
 
         # ID 以 manifest 为准; 类属性只作为没有 manifest 时的兜底
         manifest_id = manifest.get("ID")
@@ -248,10 +297,10 @@ class Sunday:
         if isinstance(manifest_used, bool):
             inst._used = manifest_used
 
-        if not self._normalize_instance(inst):
-            return
+        return inst if self._normalize_instance(inst) else None
 
-        # 同 role 模块: ID 时间戳大的替换旧的
+    def _register(self, inst):
+        """同 role 模块: ID 时间戳大的替换旧的"""
         existing = next(
             (m for m in self.G.MODULES_LIST if getattr(m, "role", None) == inst.role),
             None,
@@ -261,7 +310,6 @@ class Sunday:
                 return
             self.G.MODULES_LIST[self.G.MODULES_LIST.index(existing)] = inst
             return
-
         self.G.MODULES_LIST.append(inst)
 
     def _normalize_instance(self, inst) -> bool:
@@ -317,154 +365,80 @@ class Sunday:
         match = re.search(r"(\d+)$", raw)
         return int(match.group(1)) if match else -1
 
-    def _pick(self, candidates, kind: str, token: str):
-        """同一 token 多个候选: ID 时间戳大者优先, 相同则先加载的优先"""
-        ordered = sorted(candidates, key=lambda item: (-self._module_timestamp(item[1]), item[0]))
-        return ordered[0][1]
-
     def rebuild_registry(self):
-        """重建 name/role 索引, 并把胜出模块挂到 G.<token>"""
+        """重建已加载模块的 name/role 索引"""
         G = self.G
-
-        for key in list(getattr(G, "_module_attrs", set())):
-            if key in G.__dict__:
-                try:
-                    delattr(G, key)
-                except Exception:
-                    pass
-        G._module_attrs = set()
-
-        name_candidates = {}
-        role_candidates = {}
-        for order, mod in enumerate(G.MODULES_LIST):
+        G.by_name = {}
+        G.by_role = {}
+        for mod in G.MODULES_LIST:
             name = getattr(mod, "name", None)
             if name:
-                name_candidates.setdefault(str(name), []).append((order, mod))
-
+                old = G.by_name.get(str(name))
+                if old is None or self._module_timestamp(mod) > self._module_timestamp(old):
+                    G.by_name[str(name)] = mod
             role = getattr(mod, "role", None)
             if isinstance(role, str) and role:
-                role_candidates.setdefault(role, []).append((order, mod))
-
-        G.by_name = {
-            token: self._pick(items, "name", token)
-            for token, items in name_candidates.items()
-        }
-        G.by_role = {
-            token: self._pick(items, "role", token)
-            for token, items in role_candidates.items()
-        }
-
-        for token in set(G.by_name) | set(G.by_role):
-            if token in _G_RESERVED or not token.isidentifier():
-                continue
-            if hasattr(G, token):
-                continue
-            mod = self.resolve(token)
-            if mod is not None:
-                setattr(G, token, mod)
-                G._module_attrs.add(token)
+                old = G.by_role.get(role)
+                if old is None or self._module_timestamp(mod) > self._module_timestamp(old):
+                    G.by_role[role] = mod
 
     def resolve(self, token: str):
         """role 是主键, name 是别名"""
-        mod = self.G.by_role.get(token)
-        if mod is not None:
-            return mod
-        return self.G.by_name.get(token)
+        return self.G.by_role.get(token) or self.G.by_name.get(token)
 
-    # ------------------------------------------------------------------ #
-    # 初始化
-    # ------------------------------------------------------------------ #
-
-    def run_call(self):
-        """一次性初始化: 模块可在此调整 G.MODULES_LIST 顺序, 也可以追加新实例"""
-        queue = list(self.G.MODULES_LIST)
-        seen = set()
-        while queue:
-            mod = queue.pop(0)
-            if id(mod) in seen:
+    def _entries(self) -> list:
+        """按目录去重后的模块清单"""
+        seen, entries = set(), []
+        for entry in self._index.values():
+            if entry["dir"] in seen:
                 continue
-            if mod not in self.G.MODULES_LIST:
+            seen.add(entry["dir"])
+            entries.append(entry)
+        return sorted(entries, key=lambda item: item["dir"])
+
+    def _policy(self, entry):
+        policy = self.init.policy(entry["dir"], entry["role"], entry["name"])
+        if policy is None:
+            return None
+        # 是否随 core 启动初始化以模块 JSON 的 init 为准
+        return {**policy, "init": entry["init"]}
+
+    def _init_targets(self) -> list:
+        """按 init.json 顺序选出 used && 模块 JSON init=true 的模块"""
+        targets = []
+        for item in self.init.load():
+            if not item["used"]:
                 continue
-            seen.add(id(mod))
+            entry = self._index.get(item["name"])
+            enabled = entry["init"] if entry is not None else item["init"]
+            if enabled:
+                targets.append(item["name"])
+        return targets
 
-            if not self._normalize_instance(mod):
-                if mod in self.G.MODULES_LIST:
-                    self.G.MODULES_LIST.remove(mod)
+    def _available(self) -> list:
+        """可用模块: 过滤 used, 需要时才导入"""
+        mods = []
+        for entry in self._entries():
+            policy = self._policy(entry)
+            used = policy["used"] if policy else entry["used"]
+            if not used:
                 continue
-
-            fn = getattr(mod, "call", None)
-            if callable(fn):
-                try:
-                    fn()
-                except Exception:
-                    if mod in self.G.MODULES_LIST:
-                        self.G.MODULES_LIST.remove(mod)
-
-            # call() 期间追加的新实例继续排队, 保证它们也会执行 call()
-            for new_mod in self.G.MODULES_LIST:
-                if id(new_mod) not in seen and new_mod not in queue:
-                    queue.append(new_mod)
-
-        self.rebuild_registry()
-
-    # ------------------------------------------------------------------ #
-    # 命令分发
-    # ------------------------------------------------------------------ #
+            mod = self.load_module(entry["dir"])
+            if mod is not None:
+                mods.append(mod)
+        return mods
 
     def cmd_help(self):
-        print("这里是 sunday: 基于 Python 的命令行工具框架")
+        print("这里是 sunday: 基于 Python 的命令行自定义工具框架")
         print("用法:")
         print("  sun                    确保 core 运行")
-        print("  sun help               显示帮助和模块列表")
+        print("  sun help               显示帮助和指令列表")
+        print("  sun list               列出可用指令")
+        print("  sun init [模块...]     初始化指定模块, 或按 init.json 初始化")
         print("  sun stop               停止 core")
-        print("  sun <role>             调用模块的 run()")
-        print("  sun <role> <子命令> ... 调用 subcommands 中登记的方法")
-        print()
-        print("可用模块:")
-        visible = [m for m in self.G.MODULES_LIST if getattr(m, "_used", True)]
-        if not visible:
-            print("  (无)")
-            return
-        for mod in visible:
-            self._print_module_help(mod)
-
-    @staticmethod
-    def _first_doc(fn) -> str:
-        doc = getattr(fn, "__doc__", "") or ""
-        doc = doc.strip()
-        return doc.splitlines()[0] if doc else ""
-
-    def _print_module_help(self, mod):
-        role = getattr(mod, "role", "?")
-        name = getattr(mod, "name", None)
-        desc = getattr(mod, "desc", "")
-
-        title = f"  {role}"
-        if name and name != role:
-            title += f"  (name: {name})"
-        print(title)
-        if desc:
-            print(f"    {desc}")
-
-        run_fn = getattr(mod, "run", None)
-        if callable(run_fn):
-            line = f"    默认: sun {role}"
-            doc = self._first_doc(run_fn)
-            if doc:
-                line += f"  - {doc}"
-            print(line)
-
-        subs = getattr(mod, "subcommands", []) or []
-        if subs:
-            print("    子命令:")
-            for sub in subs:
-                line = f"      sun {role} {sub} ..."
-                doc = self._first_doc(getattr(mod, sub, None))
-                if doc:
-                    line += f"  - {doc}"
-                print(line)
-        else:
-            print("    子命令: (无)")
+        print("  sun <指令>             调用模块的默认功能 run()")
+        print("  sun <指令> <子命令> ... 调用模块的功能方法")
+        print("  sun <指令> <help>      显示模块的帮助")
 
     def dispatch(self, argv, cwd=None):
         self.T.CLIENT_CWD = cwd or str(APP_PATH)
@@ -478,18 +452,35 @@ class Sunday:
         if head == "help":
             self.cmd_help()
             return
+        if head == "list":
+            self.cmd_list(simple=True)
+            return
         if head == "stop":
             self._stop = True
             print("core 已停止")
             return
+        if head == "init":
+            self.init.run(rest or self._init_targets(), quiet=False)
+            return
 
+        entry = self._index.get(head)
+        policy = self._policy(entry) if entry else None
         mod = self.resolve(head)
-        if mod is None:
+        if mod is None and entry is None:
             raise KeyError(f"未知指令: {head}")
-        if not getattr(mod, "_used", True):
+
+        used = policy["used"] if policy else (entry["used"] if entry else True)
+        if not used:
             raise AttributeError(f"模块 {head} 未开放给 sun")
 
-        # 有子命令: 只允许 subcommands 中登记的方法
+        if mod is None:
+            mod = self.load_module(head)
+        if mod is None:
+            raise KeyError(f"未知指令: {head}")
+
+        if policy and policy["init"] and not self.init.is_initialized(head, mod.role, mod.name):
+            raise AttributeError(f"模块 {head} 未初始化, 先执行: sun init {head}")
+
         if rest:
             sub = str(rest[0])
             subs = getattr(mod, "subcommands", []) or []
@@ -502,11 +493,19 @@ class Sunday:
             fn(*rest[1:])
             return
 
-        # 无子命令: 调用默认 run()
         fn = getattr(mod, "run", None)
         if not callable(fn):
             raise AttributeError(f"模块 {head} 没有 run 方法")
         fn()
+
+    def call(self, *argv):
+        """模块内执行一条 sun 指令: G.call("lobo", "get")
+
+        返回 (code, stdout, stderr), 与客户端拿到的结果一致。
+        """
+        if len(argv) == 1 and isinstance(argv[0], (list, tuple)):
+            argv = tuple(argv[0])
+        return self.execute([str(item) for item in argv], self.T.CLIENT_CWD)
 
     def execute(self, argv, cwd=None):
         """执行一条命令并捕获输出, 返回 (code, stdout, stderr)"""
@@ -526,10 +525,6 @@ class Sunday:
         except Exception:
             err.write(traceback.format_exc())
             return 1, out.getvalue(), err.getvalue()
-
-    # ------------------------------------------------------------------ #
-    # 单实例锁
-    # ------------------------------------------------------------------ #
 
     def acquire_lock(self) -> bool:
         CORE_DIR.mkdir(parents=True, exist_ok=True)
@@ -567,15 +562,24 @@ class Sunday:
         except Exception:
             pass
 
-    # ------------------------------------------------------------------ #
-    # 常驻服务
-    # ------------------------------------------------------------------ #
+    def _shutdown_tools(self):
+        """init / server 的关停善后; 重复调用无副作用"""
+        if self._tools_closed:
+            return
+        self._tools_closed = True
+        with contextlib.suppress(Exception):
+            self.init.shutdown()
+        with contextlib.suppress(Exception):
+            self.G.server.shutdown()
 
     def _install_signals(self):
         def _on_signal(signum, _frame):
+            self._shutdown_tools()
             self._stop = True
 
-        for sig in (signal.SIGINT, signal.SIGTERM):
+        for sig in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGHUP", None)):
+            if sig is None:
+                continue
             try:
                 signal.signal(sig, _on_signal)
             except Exception:
@@ -608,6 +612,7 @@ class Sunday:
 
     def _cleanup(self):
         self._stop = True
+        self._shutdown_tools()
         if self._sock is not None:
             try:
                 self._sock.close()
@@ -636,8 +641,8 @@ class Sunday:
             pass
 
         try:
-            self.load_modules()
-            self.run_call()
+            self.scan_modules()
+            self.init.run(self._init_targets(), quiet=True)
 
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.bind(str(SOCKET_PATH))
@@ -666,10 +671,6 @@ class Sunday:
             self._cleanup()
         return 0
 
-
-# ---------------------------------------------------------------------- #
-# 客户端
-# ---------------------------------------------------------------------- #
 
 def _connect(timeout: float = 0.3):
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -784,11 +785,11 @@ def client(argv) -> int:
             return code
 
         try:
-            answer = input("回车将继续，输入其他内容取消: ")
+            answer = input("输入 y 确认，直接回车取消: ")
         except (EOFError, KeyboardInterrupt):
             print("\n[sun] 已取消", file=sys.stderr)
             return 1
-        if answer.strip():
+        if answer.strip().lower() != "y":
             return 1
 
         request_argv = list(argv) + ["--yes"]

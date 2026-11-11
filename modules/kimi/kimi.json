@@ -1,0 +1,11 @@
+{
+    "name": "kimi",
+    "role": "kimi",
+    "desc": "Kimi: 快捷操作类脚本，用默认浏览器打开 kimi.com",
+    "ID": "kimi1793023933",
+    "used": true,
+    "init": false,
+    "依赖": [],
+    "依赖模块": [],
+    "api": []
+}

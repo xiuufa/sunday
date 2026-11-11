@@ -1,0 +1,23 @@
+{
+    "name": "lobo",
+    "role": "lobo",
+    "desc": "萝卜快传: 局域网传输助手，用于快速简便地传输文件/文字，无需安装，扫码即用。并在 app 目录下配备萝卜快传的 Android APP，Windows EXE 版本以及Linux可用的软件和Image包。",
+    "ID": "lobo1793440215",
+    "used": true,
+    "init": true,
+    "依赖": [],
+    "依赖模块": ["gui"],
+    "port": 8080,
+    "save_dir": "data/lobo",
+    "host": "",
+    "binary": "",
+    "open_browser": true,
+    "sender": "sun",
+    "api": [
+        "run",
+        "get",
+        "send",
+        "stop",
+        "status"
+    ]
+}

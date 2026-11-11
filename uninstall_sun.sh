@@ -12,7 +12,7 @@ set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_PY="$PROJECT_DIR/.venv/bin/python"
-CORE_PY="$PROJECT_DIR/core.py"
+CORE_PY="$PROJECT_DIR/core/core.py"
 CORE_DIR="$PROJECT_DIR/core"
 
 echo "正在卸载 sun ..."
@@ -22,7 +22,7 @@ if [ -x "$VENV_PY" ] && [ -f "$CORE_PY" ]; then
     "$VENV_PY" "$CORE_PY" --client stop >/dev/null 2>&1 || true
     echo "已请求 core 停止"
 else
-    echo "未找到可用的 venv/core.py, 跳过 core 停止"
+    echo "未找到可用的 venv/core/core.py, 跳过 core 停止"
 fi
 
 # 2. 清理 core 运行时文件(socket / pid / lock)
@@ -42,8 +42,6 @@ for f in core.sock core.pid core.lock; do
         echo "已清理旧版: $path"
     fi
 done
-
-rmdir "$CORE_DIR" 2>/dev/null || true
 
 # 兼容旧版本遗留的 data/run
 if [ -d "$PROJECT_DIR/data/run" ]; then

@@ -7,7 +7,7 @@ rem 进入项目目录, 保证模块内的相对路径(如 .\data)有效
 cd /d "%~dp0"
 
 set "VENV_DIR=%CD%\.venv"
-set "CLI_SCRIPT=%CD%\core.py"
+set "CLI_SCRIPT=%CD%\core\core.py"
 
 rem 首次运行: 自动创建 venv 并安装依赖
 if not exist "%VENV_DIR%\Scripts\python.exe" (

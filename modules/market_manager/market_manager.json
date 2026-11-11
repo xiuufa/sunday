@@ -1,9 +1,12 @@
 {
     "name": "market_manager",
     "role": "market",
-    "desc": "模块市场管理器: 列出、搜索、安装、上传、删除云端、启停和删除本地模块",
+    "desc": "模块市场管理器:一个开发者专用的market，提供额外的云端脚本库的管理功能，需要token才能使用",
     "ID": "market_manager1792936424",
     "used": true,
+    "init": false,
+    "依赖": [],
+    "依赖模块": [],
     "gitee": {
         "repo": "xiuufa/sunday",
         "token": "",
@@ -11,6 +14,5 @@
         "release_name": "Sunday modules",
         "target_commitish": "master",
         "index_asset": "index.json"
-    },
-    "need": []
+    }
 }

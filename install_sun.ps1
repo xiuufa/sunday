@@ -8,8 +8,8 @@ $ErrorActionPreference = "Stop"
 $ProjectDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $VenvPy     = Join-Path $ProjectDir ".venv\Scripts\python.exe"
 
-if (-not (Test-Path (Join-Path $ProjectDir "core.py"))) {
-    Write-Host "[sun] 错误: 未找到 core.py, 请在项目目录内运行安装脚本"
+if (-not (Test-Path (Join-Path $ProjectDir "core\core.py"))) {
+    Write-Host "[sun] 错误: 未找到 core/core.py, 请在项目目录内运行安装脚本"
     exit 1
 }
 

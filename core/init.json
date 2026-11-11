@@ -1,0 +1,27 @@
+[
+    {
+        "name": "market",
+        "used": true,
+        "init": false
+    },
+    {
+        "name": "gui",
+        "used": true,
+        "init": true
+    },
+    {
+        "name": "lobo",
+        "used": true,
+        "init": true
+    },
+    {
+        "name": "dzbc",
+        "used": true,
+        "init": false
+    },
+    {
+        "name": "kimi",
+        "used": true,
+        "init": false
+    }
+]

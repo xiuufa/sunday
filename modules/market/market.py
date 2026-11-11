@@ -1,8 +1,10 @@
-"""模块市场(用户版)
+"""模块市场(标准版)
 
 功能:
     sun market list                 列出已安装模块
     sun market find <关键词>        搜索共享 Release 中的模块
+    sun market find_all             列出共享 Release 中的所有模块
+    sun market auto                 检查依赖并整理初始化顺序
     sun market install <name/ID>    安装或更新模块
     sun market mkid <name/ID>       生成或更新 ID
     sun market used <name/ID>       启用模块
@@ -15,6 +17,7 @@ import json
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -34,14 +37,15 @@ class Module:
     role = "market"
     desc = "模块市场: 列出、搜索、安装、启停和删除本地模块"
     subcommands = [
-        "help", "list", "find", "install", "mkid", "used", "unused", "rm",
+        "help", "list", "find", "find_all", "auto", "install", "mkid",
+        "used", "unused", "rm",
     ]
 
     # ------------------------------------------------------------------ #
     # 生命周期
     # ------------------------------------------------------------------ #
 
-    def call(self):
+    def init(self):
         """初始化模块临时目录(项目根目录 tmp/)"""
         tmp = self._tmp_dir()
         for child in tmp.iterdir():
@@ -64,7 +68,9 @@ class Module:
         print("用法:")
         print("  sun market list                     列出已安装模块")
         print("  sun market find <关键词>            搜索共享 Release 中的模块")
-        print("  sun market install <name/ID>        安装或更新模块(必要时确认)")
+        print("  sun market find_all                 列出共享 Release 中的所有模块")
+        print("  sun market auto                     检查依赖并整理初始化顺序")
+        print("  sun market install <name/ID>        安装或更新模块, 随后自动检查依赖(必要时确认)")
         print("  sun market mkid <name/ID>           生成或更新模块 ID")
         print("  sun market used <name/ID>           启用模块")
         print("  sun market unused <name/ID>         弃用模块")
@@ -84,26 +90,22 @@ class Module:
             self._print_record(rec)
             print()
 
+    def find_all(self):
+        """sun market find_all: 列出云端所有模块"""
+        records = self._remote_modules()
+        if not records:
+            print("(云端没有模块)")
+            return
+        for rec in records:
+            self._print_record(rec)
+            print()
+
     def find(self, keyword=""):
         """sun market find <关键词>: 搜索远程模块"""
         keyword = str(keyword).strip()
         if not keyword:
             self._fail("用法: sun market find <name/role/ID/关键词>")
-        try:
-            cfg = self._remote_config()
-            index = self._fetch_index(cfg)
-        except RuntimeError as e:
-            cached = self._read_json(self._cache_path())
-            if isinstance(cached.get("modules"), list):
-                print(f"警告: 云端访问失败, 使用本地缓存: {e}", file=sys.stderr)
-                index = cached
-            else:
-                self._fail(str(e))
-
-        modules = index.get("modules", []) if isinstance(index, dict) else []
-        if not isinstance(modules, list):
-            modules = []
-        records = self._dedup([r for r in modules if isinstance(r, dict)])
+        records = self._remote_modules()
         needle = keyword.lower()
         matched = []
         for rec in records:
@@ -118,6 +120,174 @@ class Module:
         for rec in matched:
             self._print_record(rec)
             print()
+
+    def _remote_modules(self) -> list:
+        """拉取云端索引; 失败时回退本地缓存"""
+        try:
+            cfg = self._remote_config()
+            index = self._fetch_index(cfg)
+        except RuntimeError as e:
+            cached = self._read_json(self._cache_path())
+            if isinstance(cached.get("modules"), list):
+                print(f"警告: 云端访问失败, 使用本地缓存: {e}", file=sys.stderr)
+                index = cached
+            else:
+                self._fail(str(e))
+
+        modules = index.get("modules", []) if isinstance(index, dict) else []
+        if not isinstance(modules, list):
+            modules = []
+        return self._dedup([r for r in modules if isinstance(r, dict)])
+
+    def auto(self, confirm=""):
+        """sun market auto: 检查依赖并整理初始化顺序"""
+        records = self._scan_local()
+        if not records:
+            print("(没有已安装的模块)")
+            return
+
+        roles = {}
+        for rec in records:
+            for token in (rec["role"], rec["name"]):
+                if token:
+                    roles.setdefault(token, rec)
+
+        self._auto_order(records, roles)
+
+        missing = self._missing_deps(records)
+        if not missing:
+            print("依赖检查完成")
+            return
+        for name, dep in missing:
+            print(f"{name} 缺少依赖: {dep}")
+        confirmed = str(confirm).strip().lower() in ("y", "yes", "--yes", "-y")
+        if not confirmed:
+            raise SystemExit(CONFIRM_EXIT_CODE)
+        self._pip_install(sorted({dep for _, dep in missing}))
+
+    def _auto_order(self, records, roles):
+        """把依赖模块移到依赖它的模块前面, 并写回 core/init.json"""
+        init = getattr(G, "init", None)
+        if init is None:
+            return
+        entries = init.load()
+        order = [item["name"] for item in entries]
+        by_name = {item["name"]: item for item in entries}
+        reported = set()
+
+        def position(rec):
+            for token in (rec["role"], rec["name"]):
+                if token in order:
+                    return order.index(token)
+            return len(order)
+
+        for _ in range(len(records) + len(order) + 1):
+            changed = False
+            for rec in sorted(records, key=position):
+                current = self._entry_token(rec, order)
+                for role in self._manifest_list(rec["manifest"], "依赖模块"):
+                    dep = roles.get(role)
+                    if dep is None:
+                        key = (rec["name"], role)
+                        if key not in reported:
+                            reported.add(key)
+                            print(
+                                f"{rec['name']}依赖{role}请使用"
+                                f"sun market find {role}选择合适的模块安装。"
+                            )
+                        continue
+                    if current is None:
+                        continue
+                    token = self._entry_token(dep, order)
+                    if token is None:
+                        token = str(dep["role"] or dep["name"]).strip()
+                        if not token or token == current:
+                            continue
+                        by_name[token] = {
+                            "name": token,
+                            "used": dep["used"],
+                            "init": by_name[current]["init"],
+                        }
+                        order.insert(order.index(current), token)
+                        changed = True
+                    elif token != current and order.index(token) > order.index(current):
+                        order.remove(token)
+                        order.insert(order.index(current), token)
+                        changed = True
+            if not changed:
+                break
+
+        if [item["name"] for item in entries] != order:
+            init.save([by_name[token] for token in order])
+
+    @staticmethod
+    def _entry_token(rec, order):
+        for token in (rec.get("role"), rec.get("name")):
+            if token and token in order:
+                return token
+        return None
+
+    def _missing_deps(self, records):
+        """按模块 JSON 的 依赖 字段检查 python 包"""
+        missing = []
+        seen = set()
+        for rec in records:
+            for dep in self._manifest_list(rec["manifest"], "依赖"):
+                key = dep.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                if not self._dep_installed(dep):
+                    missing.append((rec["name"], dep))
+        return missing
+
+    @staticmethod
+    def _manifest_list(manifest, key):
+        value = manifest.get(key)
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @staticmethod
+    def _dep_installed(requirement):
+        name = re.split(r"[<>=!~\[;,\s]", str(requirement), maxsplit=1)[0].strip()
+        if not name:
+            return True
+        try:
+            import importlib.metadata as metadata
+            metadata.version(name)
+            return True
+        except Exception:
+            pass
+        import importlib.util
+        module = {"pillow": "PIL", "opencv-python": "cv2"}.get(
+            name.lower(), name.replace("-", "_")
+        )
+        try:
+            return importlib.util.find_spec(module) is not None
+        except Exception:
+            return False
+
+    @staticmethod
+    def _pip_install(packages):
+        print(f"安装依赖: {', '.join(packages)}")
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "pip", "install", *packages],
+                capture_output=True,
+                text=True,
+            )
+        except Exception as e:
+            print(f"安装失败: {e}", file=sys.stderr)
+            return False
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            print(f"安装失败: {detail[-500:]}", file=sys.stderr)
+            return False
+        print("依赖安装完成")
+        return True
 
     def install(self, target="", confirm=""):
         """sun market install <name/ID>: 安装或更新模块"""
@@ -143,7 +313,7 @@ class Module:
             old_id = str(old_manifest.get("ID") or "")
             remote_ids = {str(item.get("ID") or "") for item in records}
             if old_id not in remote_ids:
-                confirmed = str(confirm).strip().lower() in ("yes", "--yes", "-y")
+                confirmed = str(confirm).strip().lower() in ("y", "yes", "--yes", "-y")
                 if not confirmed:
                     print(f"本地已有模块: {name} ({old_id or '无 ID'})")
                     print("该 ID 不在云端，替换后旧模块将被移除。")
@@ -160,9 +330,11 @@ class Module:
         except RuntimeError as e:
             self._fail(str(e))
 
+        self._init_ensure(installed)
         print(f"已安装: {rec['name']} ({rec['ID']})")
         print(f"路径: {installed}")
         print("重启 core 后生效: sun stop")
+        self.auto(confirm)
 
     def mkid(self, target=""):
         """sun market mkid <name/ID>: 生成或更新 ID"""
@@ -195,6 +367,7 @@ class Module:
         was_self = self._is_self(rec)
         shutil.rmtree(path)
         self._drop_instance(rec)
+        self._init_remove(rec)
         print(f"已删除: {rec['name']} ({path})")
         if was_self:
             print("market 自身已删除; 重启 core 后 market 将不再加载。")
@@ -205,6 +378,30 @@ class Module:
 
     def _modules_dir(self):
         return Path(G.APP_PATH) / "modules"
+
+    def _init_ensure(self, module_dir):
+        """把新模块追加到 core/init.json 的初始化列表"""
+        init = getattr(G, "init", None)
+        module_dir = Path(module_dir)
+        manifest = self._read_json(module_dir / f"{module_dir.name}.json")
+        token = str(
+            manifest.get("role") or manifest.get("name") or module_dir.name
+        ).strip()
+        if init is not None and token:
+            init.ensure(token, init=manifest.get("init") is True)
+
+    def _init_remove(self, rec):
+        """删除模块后清理顺序; 同 role 还有模块时保留"""
+        init = getattr(G, "init", None)
+        token = str(rec.get("role") or rec.get("name") or "").strip()
+        if init is None or not token:
+            return
+        for other in self._scan_local():
+            if other["dir"] == rec["dir"]:
+                continue
+            if token in (other["role"], other["name"]):
+                return
+        init.remove(token)
 
     def _market_json(self):
         return Path(__file__).with_suffix(".json")
@@ -381,11 +578,17 @@ class Module:
         manifest["used"] = flag
         self._write_json(rec["json_path"], manifest)
 
+        init = getattr(G, "init", None)
+        if init is not None:
+            policy = init.policy(rec["name"], rec["role"], Path(rec["dir"]).name)
+            token = policy["name"] if policy else (rec["role"] or rec["name"])
+            init.set(token, used=flag)
+
         synced = self._sync_instance(rec, used=flag)
         state = "启用" if flag else "弃用"
         print(f"已{state}: {rec['name']} (used={'true' if flag else 'false'})")
         if not synced:
-            print("已写入 JSON; 当前 core 未找到该模块实例, 重启后按模块自身 call() 逻辑生效。")
+            print("已写入 JSON; 当前 core 未找到该模块实例, 重启后按模块自身 init() 逻辑生效。")
         if self._is_self(rec) and not flag:
             print("警告: market 已弃用自身; 之后 sun market 不可用。")
             print("恢复方式: 手动把 market.json 的 used 改为 true, 然后重启 core。")
@@ -439,7 +642,7 @@ class Module:
         raise SystemExit(1)
 
     # ------------------------------------------------------------------ #
-    # Gitee Release
+    # Gitee Release(只读)
     # ------------------------------------------------------------------ #
 
     def _remote_config(self):
@@ -459,7 +662,6 @@ class Module:
 
         return {
             "repo": repo,
-            "token": "",
             "release_tag": str(cfg.get("release_tag") or DEFAULT_RELEASE_TAG),
             "index_asset": str(cfg.get("index_asset") or DEFAULT_INDEX_ASSET),
         }
@@ -579,8 +781,6 @@ class Module:
             "Accept": "application/octet-stream",
             "User-Agent": "sunday-market",
         }
-        if cfg.get("token"):
-            headers["Authorization"] = f"Bearer {cfg['token']}"
         req = urllib.request.Request(url, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:

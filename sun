@@ -3,7 +3,7 @@ set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
-CLI_SCRIPT="$PROJECT_DIR/core.py"
+CLI_SCRIPT="$PROJECT_DIR/core/core.py"
 # 记录调用者目录: core 常驻在项目根, 模块需要时可从 T.CLIENT_CWD 取
 CLIENT_CWD="${SUN_CLIENT_CWD:-$PWD}"
 # pip 下载源: 默认用清华镜像, 可用 SUN_PIP_INDEX 覆盖

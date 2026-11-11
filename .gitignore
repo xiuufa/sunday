@@ -12,6 +12,7 @@ core/core.log
 core/core.sock
 core/core.lock
 core/core.pid
+core/services/
 
 # 模块市场临时目录
 tmp/
@@ -28,3 +29,6 @@ data/vision_dataset/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# lobo 模块运行时数据（传输板/文件）
+data/lobo/

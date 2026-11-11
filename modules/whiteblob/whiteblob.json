@@ -1,0 +1,20 @@
+{
+    "name": "whiteblob",
+    "role": "gui",
+    "desc": "桌面窗口: 气泡文字与工具按钮",
+    "ID": "whiteblob1793023931",
+    "used": true,
+    "init": true,
+    "依赖": [
+        "Pillow>=10.0.0",
+        "opencv-python",
+        "numpy",
+        "imageio",
+        "tkinterdnd2"
+    ],
+    "依赖模块": [],
+    "api": [
+        "print(text, duration=3000)",
+        "create_btn(text, command=\"\")"
+    ]
+}

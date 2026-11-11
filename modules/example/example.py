@@ -24,8 +24,8 @@ class Module:
     # 可通过 CLI 调用的子命令; run 不在列表里, 它只在无子命令时调用
     subcommands = ["help"]
 
-    def call(self):
-        """一次性初始化: 可调整 G.MODULES_LIST 顺序"""
+    def init(self):
+        """由 core 的 init 工具在挂载后调用: 可调整 G.MODULES_LIST 顺序"""
         # 示例: 从初始化列表移除自己; 想让示例模块生效就删掉这一行
         G.MODULES_LIST.remove(self)
 
