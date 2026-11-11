@@ -2,7 +2,7 @@
     "name": "market",
     "role": "market",
     "desc": "模块市场: 列出、搜索、安装、启停和删除本地模块",
-    "ID": "market1792936423",
+    "ID": "market1794408706",
     "used": true,
     "init": false,
     "依赖": [],

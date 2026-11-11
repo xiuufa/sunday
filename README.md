@@ -12,7 +12,7 @@
 - **role / name / used**：`role` 是主键，`name` 是可选别名；`used=False` 的模块不暴露给 `sun`，也不会被初始化。
 - **同 role 替换**：同名角色的模块按 `<名字>.json` 里的 `ID` 时间戳比较，保留较新的一个。
 - **统一帮助**：`sun help` 打印每个模块的 `role / name` 和 `desc`；`sun list` 只打印各模块的 `name`；参数、子命令等细节由模块自己的 `help` 子命令提供。
-- **模块市场**：`market`（发布版，面向用户）和 `market_manager`（开发者工具，已入库）共用 `role = market`，按 `ID` 时间戳只加载一个；负责列出、搜索全部云端模块、依赖检查、安装、启用/弃用和删除本地模块，`market_manager` 额外负责上传和删除云端模块。
+- **模块市场**：`market`（发布版，面向用户）和 `market_manager`（开发者工具，通过 Release 分发）共用 `role = market`，按 `ID` 时间戳只加载一个；负责列出、搜索全部云端模块、依赖检查、安装、启用/弃用和删除本地模块，`market_manager` 额外负责上传和删除云端模块。
 - **共享日志**：core 通过 `G.log(message, path="")` 提供带时间戳的追加日志，默认写入 `log/sun.log`。
 - **输出回传**：模块里的 `print()` 会被 core 捕获并返回给 `sun`，客户端不需要额外协议。
 - **致命错误提示**：core 无法继续运行时写 `core/core.log` 并尝试弹出系统消息。
@@ -126,7 +126,7 @@ sun stop
 市场有两个模块，`role` 都是 `market`；同时存在时按 `ID` 时间戳只加载一个：
 
 - `market`：面向用户的发布版，随项目一起分发；没有云端上传和删除权限；
-- `market_manager`：开发者工具，已入库，额外支持上传和删除云端模块。
+- `market_manager`：开发者工具，通过 Release 分发，额外支持上传和删除云端模块。
 
 两者的 `list / find / find_all / auto / install / mkid / used / unused / rm` 完全一致，只是 `market` 不含 `upload / delete`。
 
@@ -150,7 +150,7 @@ sun market_manager delete <name/ID>     # 删除云端模块(仅 market_manager,
 
 市场配置：
 
-- 开发本仓库：`modules/market_manager/market_manager.json`；
+- 开发本仓库：先安装 `market_manager`，其配置在 `modules/market_manager/market_manager.json`；
 - 面向用户的发布版：`modules/market/market.json`。
 
 发布版只需要：
@@ -290,8 +290,6 @@ sunday/
 │   └── index.json
 ├── modules/                # 插件目录
 │   ├── example/            # 结构/接口示例(used=false，不参与 sun)
-│   ├── dzbc/
-│   ├── kimi/
 │   ├── lobo/               # role = lobo，萝卜快传局域网传输板
 │   │   ├── lobo.py         # facade: 启停服务、收发文件/文字
 │   │   ├── clipboard.py    # 跨平台剪贴板
@@ -300,8 +298,7 @@ sunday/
 │   │   ├── whiteblob.py    # facade: 挂载时登记、init() 启动、命令代理
 │   │   ├── serve.py        # 独立窗口进程(python -m modules.whiteblob.serve)
 │   │   └── common.py       # 共享常量
-│   ├── market/             # role = market，用户发布版
-│   └── market_manager/     # role = market，开发者工具
+│   └── market/             # role = market，用户发布版
 ├── docs/
 │   └── 插件开发手册.md
 ├── data/                   # 模块资源目录(core 不读取)
@@ -310,7 +307,7 @@ sunday/
 
 > `data/` 和 `APP/` 是历史/配套资源，core 不依赖它们；是否使用由具体模块决定。
 >
-> `example` 会在 `init()` 里把自己从 `G.MODULES_LIST` 移除，所以默认的 `sun help` 不会显示它；它只是结构/接口示例。`market_manager` 是开发者工具，已入库；面向用户的发布版用 `market`（`role` 也是 `market`）。
+> `example` 会在 `init()` 里把自己从 `G.MODULES_LIST` 移除，所以默认的 `sun help` 不会显示它；它只是结构/接口示例。`market_manager` 是开发者工具，通过 Release 分发；面向用户的发布版用 `market`（`role` 也是 `market`）。
 >
 > `init` / `server` / `log` 都是 `core/` 里的内置工具，不是插件：`init` 读取 `core/init.json` 的列表并结合模块 JSON 的 `init` 决定初始化哪些模块，`server` 提供 `G.server`，`log` 支撑 `G.log`。
 
